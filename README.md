@@ -48,6 +48,7 @@ Les triggers implémentent la logique métier et l'historisation.
     * **Contraintes de Dates de Segment** (`date_depart` < `arrivee_prevue`). *(Déjà partiellement dans `CHECK`)*
     * **Vérification de la co-localisation** (Un conteneur ne peut être à la fois sur un navire et dans un port).
     * **Contrainte d'Ordre des Escales** sur une Route.
+    * **Protection de la table HISTORIQUE** (Un trigger BEFORE DELETE interdit toute suppression dans la table HISTORIQUE)
 
 ### 3. Jeux de Données et Tests
 
@@ -61,14 +62,4 @@ Les triggers implémentent la logique métier et l'historisation.
 | **ET-TAHERY ZINEB** | Conception MCD/MLD, Scripting PostgreSQL (Tables & Contraintes), ... |
 | **ASMAE JANAH** | Implémentation Triggers Avancés/Historisation, Stratégie d'Indexation, Documentation (`README`), ... |
 
-## ▶️ Comment Démarrer
-
-1.  Cloner le dépôt : `git clone https://www.linternaute.fr/dictionnaire/fr/definition/depot/`
-2.  Connectez-vous à votre instance PostgreSQL.
-3.  Exécutez les scripts dans l'ordre :
-    ```bash
-    psql -U votre_utilisateur -d votre_bdd -f scripts/schema_creation.sql
-    psql -U votre_utilisateur -d votre_bdd -f scripts/triggers.sql
-    psql -U votre_utilisateur -d votre_bdd -f scripts/data_insertion.sql
-    ```
-4.  Lancez les tests : `psql -U votre_utilisateur -d votre_bdd -f scripts/test_cases.sql`
+**Trello** : https://trello.com/invite/b/693fca8b092adc75ed420382/ATTI0898a7a2fca81feaadb0bc408866d236EC09FAB4/conception-base-de-donnees-avec-postgresql
