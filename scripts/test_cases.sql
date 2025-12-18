@@ -65,7 +65,7 @@ VALUES (2, 1, 2, 20);
 
 
 -- =======================================================
--- 6️⃣ TEST RELATIONS METIER
+--  TEST RELATIONS METIER
 -- =======================================================
 
 -- Conteneurs par expédition
@@ -92,4 +92,5 @@ JOIN EXPEDITION ex ON ee.id_expedition = ex.id_expedition;
 
 
 DELETE FROM HISTORIQUE WHERE id_historique = 1;
+
 
