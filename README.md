@@ -50,7 +50,7 @@ Les triggers implémentent la logique métier et l'historisation.
     * **Contrainte d'Ordre des Escales** sur une Route.
     * **Protection de la table HISTORIQUE** (Un trigger BEFORE DELETE interdit toute suppression dans la table HISTORIQUE)
 
-### 3. Jeux de Données et Tests
+### 3.Données et Tests
 
 * `scripts/data_insertion.sql`: Instructions `INSERT INTO` pour peupler les tables de données de test.
 * `scripts/test_cases.sql`: Requêtes de test pour valider l'intégrité des données, le bon fonctionnement des triggers, et les contraintes métiers.
