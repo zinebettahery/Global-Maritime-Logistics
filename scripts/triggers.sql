@@ -1,5 +1,5 @@
 -- =====================================================
--- 1️⃣ HISTORISATION DES STATUTS DES CONTENEURS
+-- HISTORISATION DES STATUTS DES CONTENEURS
 -- =====================================================
 CREATE OR REPLACE FUNCTION fn_historique_conteneur()
 RETURNS TRIGGER AS $$
@@ -21,7 +21,7 @@ FOR EACH ROW
 EXECUTE FUNCTION fn_historique_conteneur();
 
 -- =====================================================
--- 2️⃣ CONTRAINTE DE DATES DES SEGMENTS
+--  CONTRAINTE DE DATES DES SEGMENTS
 -- date_depart < arrivee_prevue
 -- =====================================================
 CREATE OR REPLACE FUNCTION fn_check_dates_segment()
@@ -42,7 +42,7 @@ FOR EACH ROW
 EXECUTE FUNCTION fn_check_dates_segment();
 
 -- =====================================================
--- 3️⃣ CO-LOCALISATION CONTENEUR
+--  CO-LOCALISATION CONTENEUR
 -- Un conteneur ne peut pas être à la fois
 -- sur un navire ET dans un port
 -- =====================================================
@@ -87,7 +87,7 @@ FOR EACH ROW
 EXECUTE FUNCTION fn_check_colocalisation();
 
 -- =====================================================
--- 4️⃣ CONTRAINTE D’ORDRE DES ESCALES SUR UNE ROUTE
+--  CONTRAINTE D’ORDRE DES ESCALES SUR UNE ROUTE
 -- L’ordre doit être unique et croissant par route
 -- =====================================================
 CREATE OR REPLACE FUNCTION fn_check_ordre_escale()
@@ -132,3 +132,4 @@ CREATE TRIGGER trg_no_delete_historique
 BEFORE DELETE ON HISTORIQUE
 FOR EACH ROW
 EXECUTE FUNCTION fn_no_delete_historique();
+
