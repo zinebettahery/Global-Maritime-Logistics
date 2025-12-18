@@ -1,105 +1,134 @@
--- 1. Création de la fonction d'historisation
-CREATE OR REPLACE FUNCTION log_conteneur_status_change()
+-- =====================================================
+-- 1️⃣ HISTORISATION DES STATUTS DES CONTENEURS
+-- =====================================================
+CREATE OR REPLACE FUNCTION fn_historique_conteneur()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Vérifie si le statut a réellement changé
-    IF OLD.statut IS DISTINCT FROM NEW.statut THEN
-        INSERT INTO HISTORIQUE (
-            id_conteneur,
-            ancien_statut,
-            nouveau_statut,
-            date_changement,
-            utilisateur,
-            details
-        )
+    IF NEW.statut IS DISTINCT FROM OLD.statut THEN
+        INSERT INTO HISTORIQUE (id_conteneur, description)
         VALUES (
             NEW.id_conteneur,
-            OLD.statut,
-            NEW.statut,
-            NOW(),
-            current_user,
-            'Changement de statut pour le conteneur ' || NEW.id_conteneur
+            'Changement de statut : ' || OLD.statut || ' → ' || NEW.statut
         );
     END IF;
-
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- 2. Création du Trigger
-CREATE TRIGGER before_update_conteneur_status
-BEFORE UPDATE OF statut ON CONTENEUR
+CREATE TRIGGER trg_historique_conteneur
+AFTER UPDATE OF statut ON CONTENEUR
 FOR EACH ROW
-EXECUTE FUNCTION log_conteneur_status_change();
+EXECUTE FUNCTION fn_historique_conteneur();
 
+-- =====================================================
+-- 2️⃣ CONTRAINTE DE DATES DES SEGMENTS
+-- date_depart < arrivee_prevue
+-- =====================================================
+CREATE OR REPLACE FUNCTION fn_check_dates_segment()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.date_depart >= NEW.arrivee_prevue THEN
+        RAISE EXCEPTION
+        'date_depart (%) doit être antérieure à arrivee_prevue (%)',
+        NEW.date_depart, NEW.arrivee_prevue;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
+CREATE TRIGGER trg_check_dates_segment
+BEFORE INSERT OR UPDATE ON SEGMENT
+FOR EACH ROW
+EXECUTE FUNCTION fn_check_dates_segment();
 
--- La contrainte UNIQUE (id_route, ordre) peut le faire directement,
--- mais un trigger peut ajouter une logique plus complexe si nécessaire (e.g., ordre consécutif).
-
--- Ici, on va s'assurer qu'on ne peut pas insérer un 'ordre' déjà utilisé pour cette 'id_route'
--- (Note : Une contrainte UNIQUE(id_route, ordre) dans la table ESCALE serait plus simple
--- et plus performante pour cette règle simple.)
-/*
--- Solution plus performante par contrainte
-ALTER TABLE ESCALE ADD CONSTRAINT unique_ordre_par_route UNIQUE (id_route, ordre);
-*/
-
--- Exemple de Trigger pour une logique métier plus complexe :
-
-CREATE OR REPLACE FUNCTION check_escale_order_constraint()
+-- =====================================================
+-- 3️⃣ CO-LOCALISATION CONTENEUR
+-- Un conteneur ne peut pas être à la fois
+-- sur un navire ET dans un port
+-- =====================================================
+CREATE OR REPLACE FUNCTION fn_check_colocalisation()
 RETURNS TRIGGER AS $$
 DECLARE
-    max_ordre INT;
+    nb_navire INT;
+    nb_port INT;
 BEGIN
-    SELECT MAX(ordre) INTO max_ordre
-    FROM ESCALE
-    WHERE id_route = NEW.id_route;
+    SELECT COUNT(*) INTO nb_navire
+    FROM HISTORIQUE
+    WHERE id_conteneur = NEW.id_conteneur
+      AND id_navire IS NOT NULL
+      AND date_heure = (
+          SELECT MAX(date_heure)
+          FROM HISTORIQUE
+          WHERE id_conteneur = NEW.id_conteneur
+      );
 
-    IF max_ordre IS NOT NULL AND NEW.ordre > max_ordre + 1 THEN
-        RAISE EXCEPTION 'L''ordre de l''escale doit être séquentiel. Le prochain ordre pour la route % est %. Tentative d''insertion de l''ordre %.',
-        NEW.id_route, max_ordre + 1, NEW.ordre;
+    SELECT COUNT(*) INTO nb_port
+    FROM HISTORIQUE
+    WHERE id_conteneur = NEW.id_conteneur
+      AND id_port IS NOT NULL
+      AND date_heure = (
+          SELECT MAX(date_heure)
+          FROM HISTORIQUE
+          WHERE id_conteneur = NEW.id_conteneur
+      );
+
+    IF nb_navire > 0 AND nb_port > 0 THEN
+        RAISE EXCEPTION
+        'Un conteneur ne peut pas être simultanément sur un navire et dans un port';
     END IF;
 
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER before_insert_escale_order
-BEFORE INSERT ON ESCALE
+CREATE TRIGGER trg_check_colocalisation
+AFTER INSERT ON HISTORIQUE
 FOR EACH ROW
-EXECUTE FUNCTION check_escale_order_constraint();
+EXECUTE FUNCTION fn_check_colocalisation();
 
+-- =====================================================
+-- 4️⃣ CONTRAINTE D’ORDRE DES ESCALES SUR UNE ROUTE
+-- L’ordre doit être unique et croissant par route
+-- =====================================================
+CREATE OR REPLACE FUNCTION fn_check_ordre_escale()
+RETURNS TRIGGER AS $$
+DECLARE
+    ordre_existant INT;
+BEGIN
+    SELECT COUNT(*) INTO ordre_existant
+    FROM ESCALE
+    WHERE id_route = NEW.id_route
+      AND ordre = NEW.ordre
+      AND id_escale <> COALESCE(NEW.id_escale, -1);
 
--- 1. Création de la fonction de vérification de statut cohérent
-CREATE OR REPLACE FUNCTION check_conteneur_location_coherence()
+    IF ordre_existant > 0 THEN
+        RAISE EXCEPTION
+        'L’ordre % existe déjà pour la route %',
+        NEW.ordre, NEW.id_route;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_check_ordre_escale
+BEFORE INSERT OR UPDATE ON ESCALE
+FOR EACH ROW
+EXECUTE FUNCTION fn_check_ordre_escale();
+
+-- =====================================================
+-- INTERDICTION DE SUPPRESSION SUR HISTORIQUE
+-- =====================================================
+CREATE OR REPLACE FUNCTION fn_no_delete_historique()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.statut = 'au_port' THEN
-        -- Logique : Si le statut passe à 'au_port', on devrait s'assurer qu'il n'est pas logiquement 'sur_navire'
-        IF EXISTS (
-            SELECT 1
-            FROM EXPEDITION_CONTENEUR ec
-            JOIN SEGMENT s ON ec.id_expedition = s.id_expedition -- Le conteneur fait partie d'une expédition
-            WHERE ec.id_conteneur = NEW.id_conteneur
-            AND s.arrivee_reelle IS NULL -- Le segment est en cours (en transit, donc sur navire)
-        ) THEN
-            RAISE EXCEPTION 'Le conteneur est en transit sur un segment actif et ne peut pas être au statut ''au_port''.';
-        END IF;
-
-    ELSIF NEW.statut = 'sur_navire' THEN
-        -- Logique : Si le statut passe à 'sur_navire', il ne devrait pas y avoir d'enregistrement de présence au port.
-        
-        NULL; 
-
-    END IF;
-
-    RETURN NEW;
+    RAISE EXCEPTION
+        'Suppression interdite : la table HISTORIQUE est immuable (audit/log)';
 END;
 $$ LANGUAGE plpgsql;
 
--- 2. Création du Trigger
-CREATE TRIGGER before_update_conteneur_location
-BEFORE UPDATE OF statut ON CONTENEUR
+
+CREATE TRIGGER trg_no_delete_historique
+BEFORE DELETE ON HISTORIQUE
 FOR EACH ROW
-EXECUTE FUNCTION check_conteneur_location_coherence();
+EXECUTE FUNCTION fn_no_delete_historique();
