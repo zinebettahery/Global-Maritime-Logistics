@@ -44,11 +44,10 @@ Les scripts SQL se trouvent dans le dossier `scripts/`.
 Les triggers implémentent la logique métier et l'historisation.
 
 * `scripts/triggers.sql`: Contient les fonctions `CREATE FUNCTION` et les `CREATE TRIGGER` pour les règles suivantes :
-    * **Historisation des statuts de Conteneurs** (via la table `HISTORIQUE`).
-    * **Contraintes de Dates de Segment** (`date_depart` < `arrivee_prevue`). *(Déjà partiellement dans `CHECK`)*
-    * **Vérification de la co-localisation** (Un conteneur ne peut être à la fois sur un navire et dans un port).
-    * **Contrainte d'Ordre des Escales** sur une Route.
-    * **Protection de la table HISTORIQUE** (Un trigger BEFORE DELETE interdit toute suppression dans la table HISTORIQUE)
+    * **Historisation automatique des statuts des conteneurs** (via la table `HISTORIQUE`).
+    * **Immutabilité des événements logistiques** (toute modification (UPDATE) ou suppression (DELETE) d’un événement est interdite afin de préserver l’historique.)
+    * **Contrôle des transitions de statut des conteneursn** (seules les transitions de statuts autorisées sont acceptées pour garantir la cohérence de localisation).
+    * **Génération automatique de la date de création des expéditions** (la date est renseignée automatiquement lors de l’insertion si elle n’est pas fournie.)
 
 ### 3.Données et Tests
 
