@@ -1,16 +1,29 @@
--- =====================================================
--- HISTORISATION DES STATUTS DES CONTENEURS
--- =====================================================
+--1 HISTORIQUE AUTOMATIQUE DES STATUTS DES CONTENEURS
 CREATE OR REPLACE FUNCTION fn_historique_conteneur()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.statut IS DISTINCT FROM OLD.statut THEN
-        INSERT INTO HISTORIQUE (id_conteneur, description)
+    -- Vérifier si le statut a réellement changé
+    IF OLD.statut IS DISTINCT FROM NEW.statut THEN
+        
+        -- Insérer une ligne dans la table HISTORIQUE
+        INSERT INTO HISTORIQUE (
+            id_conteneur,
+            ancien_statut,
+            nouveau_statut,
+            date_changement,
+            utilisateur,
+            details
+        )
         VALUES (
-            NEW.id_conteneur,
-            'Changement de statut : ' || OLD.statut || ' → ' || NEW.statut
+            OLD.id_conteneur,
+            OLD.statut,
+            NEW.statut,
+            now(),
+            current_user,
+            'Changement automatique du statut du conteneur'
         );
     END IF;
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -20,116 +33,75 @@ AFTER UPDATE OF statut ON CONTENEUR
 FOR EACH ROW
 EXECUTE FUNCTION fn_historique_conteneur();
 
--- =====================================================
---  CONTRAINTE DE DATES DES SEGMENTS
--- date_depart < arrivee_prevue
--- =====================================================
-CREATE OR REPLACE FUNCTION fn_check_dates_segment()
+--2 INTERDIRE LA MODIFICATION DES ÉVÉNEMENTS
+CREATE OR REPLACE FUNCTION fn_block_evenement_update()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.date_depart >= NEW.arrivee_prevue THEN
-        RAISE EXCEPTION
-        'date_depart (%) doit être antérieure à arrivee_prevue (%)',
-        NEW.date_depart, NEW.arrivee_prevue;
-    END IF;
-    RETURN NEW;
+    RAISE EXCEPTION 'Modification interdite : les événements sont immuables';
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_check_dates_segment
-BEFORE INSERT OR UPDATE ON SEGMENT
+CREATE TRIGGER trg_block_update_evenement
+BEFORE UPDATE ON EVENEMENT
 FOR EACH ROW
-EXECUTE FUNCTION fn_check_dates_segment();
+EXECUTE FUNCTION fn_block_evenement_update();
 
--- =====================================================
---  CO-LOCALISATION CONTENEUR
--- Un conteneur ne peut pas être à la fois
--- sur un navire ET dans un port
--- =====================================================
-CREATE OR REPLACE FUNCTION fn_check_colocalisation()
+--3 INTERDIRE LA SUPPRESSION DES ÉVÉNEMENTS
+
+CREATE OR REPLACE FUNCTION fn_block_evenement_delete()
 RETURNS TRIGGER AS $$
-DECLARE
-    nb_navire INT;
-    nb_port INT;
 BEGIN
-    SELECT COUNT(*) INTO nb_navire
-    FROM HISTORIQUE
-    WHERE id_conteneur = NEW.id_conteneur
-      AND id_navire IS NOT NULL
-      AND date_heure = (
-          SELECT MAX(date_heure)
-          FROM HISTORIQUE
-          WHERE id_conteneur = NEW.id_conteneur
-      );
-
-    SELECT COUNT(*) INTO nb_port
-    FROM HISTORIQUE
-    WHERE id_conteneur = NEW.id_conteneur
-      AND id_port IS NOT NULL
-      AND date_heure = (
-          SELECT MAX(date_heure)
-          FROM HISTORIQUE
-          WHERE id_conteneur = NEW.id_conteneur
-      );
-
-    IF nb_navire > 0 AND nb_port > 0 THEN
-        RAISE EXCEPTION
-        'Un conteneur ne peut pas être simultanément sur un navire et dans un port';
-    END IF;
-
-    RETURN NEW;
+    -- Bloquer toute suppression
+    RAISE EXCEPTION 'Suppression interdite : les événements sont historisés';
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_check_colocalisation
-AFTER INSERT ON HISTORIQUE
+CREATE TRIGGER trg_block_delete_evenement
+BEFORE DELETE ON EVENEMENT
 FOR EACH ROW
-EXECUTE FUNCTION fn_check_colocalisation();
+EXECUTE FUNCTION fn_block_evenement_delete();
 
--- =====================================================
---  CONTRAINTE D’ORDRE DES ESCALES SUR UNE ROUTE
--- L’ordre doit être unique et croissant par route
--- =====================================================
-CREATE OR REPLACE FUNCTION fn_check_ordre_escale()
+--4 CONTRÔLE DES TRANSITIONS DE STATUT DES CONTENEURS
+CREATE OR REPLACE FUNCTION fn_check_statut_conteneur()
 RETURNS TRIGGER AS $$
-DECLARE
-    ordre_existant INT;
 BEGIN
-    SELECT COUNT(*) INTO ordre_existant
-    FROM ESCALE
-    WHERE id_route = NEW.id_route
-      AND ordre = NEW.ordre
-      AND id_escale <> COALESCE(NEW.id_escale, -1);
+    IF OLD.statut = NEW.statut THEN
+        RETURN NEW;
+    END IF;
 
-    IF ordre_existant > 0 THEN
-        RAISE EXCEPTION
-        'L’ordre % existe déjà pour la route %',
-        NEW.ordre, NEW.id_route;
+    IF (OLD.statut = 'au_port' AND NEW.statut IN ('sur_navire','en_inspection'))
+       OR (OLD.statut = 'sur_navire' AND NEW.statut IN ('au_port','en_transit'))
+       OR (OLD.statut = 'en_transit' AND NEW.statut = 'au_port')
+       OR (OLD.statut = 'en_inspection' AND NEW.statut = 'au_port') THEN
+        RETURN NEW;
+    END IF;
+
+    RAISE EXCEPTION 'Transition de statut conteneur invalide (% → %)', OLD.statut, NEW.statut;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_check_statut_conteneur
+BEFORE UPDATE OF statut ON CONTENEUR
+FOR EACH ROW
+EXECUTE FUNCTION fn_check_statut_conteneur();
+
+--5 DATE AUTOMATIQUE DE CRÉATION DES EXPÉDITIONS
+CREATE OR REPLACE FUNCTION fn_set_date_creation_expedition()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Si la date n’est pas fournie, on la génère automatiquement
+    IF NEW.date_creation IS NULL THEN
+        NEW.date_creation := CURRENT_DATE;
     END IF;
 
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_check_ordre_escale
-BEFORE INSERT OR UPDATE ON ESCALE
+CREATE TRIGGER trg_date_creation_expedition
+BEFORE INSERT ON EXPEDITION
 FOR EACH ROW
-EXECUTE FUNCTION fn_check_ordre_escale();
-
--- =====================================================
--- INTERDICTION DE SUPPRESSION SUR HISTORIQUE
--- =====================================================
-CREATE OR REPLACE FUNCTION fn_no_delete_historique()
-RETURNS TRIGGER AS $$
-BEGIN
-    RAISE EXCEPTION
-        'Suppression interdite : la table HISTORIQUE est immuable (audit/log)';
-END;
-$$ LANGUAGE plpgsql;
+EXECUTE FUNCTION fn_set_date_creation_expedition();
 
 
-CREATE TRIGGER trg_no_delete_historique
-BEFORE DELETE ON HISTORIQUE
-FOR EACH ROW
-EXECUTE FUNCTION fn_no_delete_historique();
 
